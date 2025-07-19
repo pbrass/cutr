@@ -1,5 +1,7 @@
 use clap::Parser;
 use anyhow::Result;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader };
 
 
 #[derive(Debug, Parser)]
@@ -23,7 +25,7 @@ struct Args {
     complement: bool,
 
     /// do not print lines that do not contain a delimiter
-    #[arg(short('s'),long("only-delimited"), default_value = "false")]
+    #[arg(short('s'),long("only-delimited"), default_value = "false" )]
     only_delimited: bool,
 
     /// Line delimiter is NULL, not newline
@@ -31,7 +33,7 @@ struct Args {
     zero_terminated: bool,
 
     /// Bytes to select
-    #[arg(short('b'), long("bytes"), conflicts_with("characters"), conflicts_with("fields"), value_delimiter = ',', num_args = 1..)]
+    #[arg(short('b'), long("bytes"), conflicts_with("characters"), conflicts_with("fields"), value_delimiter = ',', default_value="1-", num_args = 1..)]
     bytes: Option<Vec<String>>,
 
     /// Characters to select
@@ -43,10 +45,90 @@ struct Args {
     fields: Option<Vec<String>>,
 }
 
+fn open_read(filename: &str) -> Result<Box<dyn BufRead>> {
+    match filename {
+        "-" => Ok(Box::new(BufReader::new(io::stdin()))),
+        _ => Ok(Box::new(BufReader::new(File::open(filename)?))),
+    }
+}
 
 fn run(_args: Args) -> Result<()> {
+    let line_terminator = if _args.zero_terminated { b'\0' } else { b'\n' };
+    let delimiter = _args.out_delim.unwrap_or(_args.input_delim).to_string();
+    let mut inner_delimiter = delimiter.clone();
     for filename in _args.files {
-
+        match open_read(&filename) {
+            Err(err) => {
+                eprintln!("{filename}: Failed to open {err}");
+                std::process::exit(1);
+            },
+            Ok(mut h_file) => {
+                let line: &mut Vec<u8> = &mut Vec::new();
+                while h_file.read_until(line_terminator, line)? > 0 {
+                    line.pop(); //ditch the line terminator
+                    let mut fields: Vec<String> = Vec::new();
+                    let mut selectors: Vec<String> = Vec::new();
+                    if _args.characters.is_some() {
+                        //let linestr = String::from_utf8_lossy(line.as_slice());
+                        let linestr = String::from_utf8(line.to_vec()).unwrap();
+                        fields = linestr.chars().map(|c| c.to_string()).collect();
+                        selectors = _args.characters.clone().unwrap();
+                        inner_delimiter = "".to_string();
+                    }
+                    else if _args.fields.is_some() {
+                        selectors = _args.fields.clone().unwrap();
+                        fields = line.as_slice().split(|&b| b == u8::try_from(_args.input_delim).unwrap()).map(|s| String::from_utf8_lossy(s).to_string()).collect();
+                        if _args.only_delimited {
+                            if fields.len() == 1  {
+                                continue;
+                            }
+                        }
+                    }
+                    else if _args.bytes.is_some() {
+                        selectors = _args.bytes.clone().unwrap();
+                        fields = line.as_slice().iter().map(|b| String::from_utf8_lossy(&[*b]).to_string()).collect();
+                        inner_delimiter = "".to_string();
+                    }
+                    let mut i=0;
+                    for selector in selectors {
+                        /*
+                        if _args.complement {
+                            let start:usize = selector.parse::<usize>().unwrap_or(1);
+                            let end:usize = fields.len();
+                            let output_string = &fields[start-1..end];
+                            let output = output_string.join(&inner_delimiter);
+                            print!("{}",output);
+                        }
+                         */
+                        let default_start:usize  = 1;
+                        let default_end = fields.len();
+                        let mut start:usize = default_start;
+                        let mut end:usize = default_end;
+                        if selector.contains("-") {
+                            let mut split = selector.splitn(2, '-');
+                            start = split.next().unwrap().parse::<usize>().unwrap_or(default_start);
+                            end = split.next().unwrap().parse::<usize>().unwrap_or(default_end);
+                        }
+                        else {
+                            start = selector.parse::<usize>().unwrap_or(default_start);
+                            end = start;
+                        }
+                        if start > fields.len() {continue;}
+                        if end > fields.len() {end = fields.len();}
+                        if i>0 {
+                            print!("{}",delimiter);
+                        }
+                        i+=1;
+                        let output_string = &fields[start-1..end];
+                        let output = output_string.join(&inner_delimiter);
+                        print!("{}",output);
+                    }
+                    print!("{}",line_terminator as char);
+                    //println!("{:?}",fields);
+                    line.clear();
+                }
+            }
+        }
     }
     Ok(())
 }

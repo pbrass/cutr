@@ -7,6 +7,9 @@ use std::io::{self, BufRead, BufReader };
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 /// Rust version of `cut`
+/// `cutr` is a bit more permissive.
+/// If you supply a bad set index in a selector, like 1-a or z-7 it will assume you
+/// meant either the first or the last character for your non-numeric value.
 struct Args {
     /// List of input files
     #[arg(value_name = "FILE", default_value = "-")]
@@ -32,18 +35,25 @@ struct Args {
     #[arg(short('z'),long("zero-terminated"), default_value = "false")]
     zero_terminated: bool,
 
+    #[clap(flatten)]
+    selectors: Selectors,
+}
+#[derive(Debug, Parser)]
+#[group(required = true, multiple = false)]
+struct Selectors {
     /// Bytes to select
-    #[arg(short('b'), long("bytes"), conflicts_with("characters"), conflicts_with("fields"), value_delimiter = ',', default_value="1-", num_args = 1..)]
+    #[arg(short('b'), long("bytes"), value_delimiter = ',')]
     bytes: Option<Vec<String>>,
 
     /// Characters to select
-    #[arg(short('c'), long("characters"), conflicts_with("bytes"), conflicts_with("fields"), value_delimiter = ',', num_args = 1..)]
+    #[arg(short('c'), long("characters"), value_delimiter = ',')]
     characters: Option<Vec<String>>,
 
     /// Fields to select
-    #[arg(short('f'), long("fields"), conflicts_with("bytes"), conflicts_with("characters"), value_delimiter = ',', num_args = 1..)]
+    #[arg(short('f'), long("fields"), value_delimiter = ',' )]
     fields: Option<Vec<String>>,
 }
+
 
 fn open_read(filename: &str) -> Result<Box<dyn BufRead>> {
     match filename {
@@ -53,14 +63,14 @@ fn open_read(filename: &str) -> Result<Box<dyn BufRead>> {
 }
 
 fn run(_args: Args) -> Result<()> {
+    //println!("{:?}",_args);
     let line_terminator = if _args.zero_terminated { b'\0' } else { b'\n' };
     let delimiter = _args.out_delim.unwrap_or(_args.input_delim).to_string();
     let mut inner_delimiter = delimiter.clone();
     for filename in _args.files {
         match open_read(&filename) {
             Err(err) => {
-                eprintln!("{filename}: Failed to open {err}");
-                std::process::exit(1);
+                eprintln!("{filename}: Failed to open {err}, skipping");
             },
             Ok(mut h_file) => {
                 let line: &mut Vec<u8> = &mut Vec::new();
@@ -68,15 +78,15 @@ fn run(_args: Args) -> Result<()> {
                     line.pop(); //ditch the line terminator
                     let mut fields: Vec<String> = Vec::new();
                     let mut selectors: Vec<String> = Vec::new();
-                    if _args.characters.is_some() {
+                    if _args.selectors.characters.is_some() {
                         //let linestr = String::from_utf8_lossy(line.as_slice());
                         let linestr = String::from_utf8(line.to_vec()).unwrap();
                         fields = linestr.chars().map(|c| c.to_string()).collect();
-                        selectors = _args.characters.clone().unwrap();
+                        selectors = _args.selectors.characters.clone().unwrap();
                         inner_delimiter = "".to_string();
                     }
-                    else if _args.fields.is_some() {
-                        selectors = _args.fields.clone().unwrap();
+                    else if _args.selectors.fields.is_some() {
+                        selectors = _args.selectors.fields.clone().unwrap();
                         fields = line.as_slice().split(|&b| b == u8::try_from(_args.input_delim).unwrap()).map(|s| String::from_utf8_lossy(s).to_string()).collect();
                         if _args.only_delimited {
                             if fields.len() == 1  {
@@ -84,8 +94,8 @@ fn run(_args: Args) -> Result<()> {
                             }
                         }
                     }
-                    else if _args.bytes.is_some() {
-                        selectors = _args.bytes.clone().unwrap();
+                    else if _args.selectors.bytes.is_some() {
+                        selectors = _args.selectors.bytes.clone().unwrap();
                         fields = line.as_slice().iter().map(|b| String::from_utf8_lossy(&[*b]).to_string()).collect();
                         inner_delimiter = "".to_string();
                     }

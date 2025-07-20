@@ -7,3 +7,9 @@ authors = ["Phil Brass <pbrass@gmail.com>"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 anyhow = "*"
+
+[dev-dependencies]
+predicates = "3.0.4"
+assert_cmd  = "2.0.13"
+rand = "0.8.5"
+pretty_assertions = "1.4.0"
